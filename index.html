@@ -664,8 +664,6 @@ footer a:hover {
   </p>
 </footer>
 
-
-
   <!-- SCRIPTS -->
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
@@ -749,4 +747,415 @@ footer a:hover {
       const vibrateEnabled = localStorage.getItem('vibrateEnabled') !== 'false';
       vibrateToggle.checked = vibrateEnabled;
       
-      const autoOpenEnable
+      const autoOpenEnabled = localStorage.getItem('autoOpenEnabled') !== 'false';
+      autoOpenToggle.checked = autoOpenEnabled;
+    }
+
+    // Initialize camera selection
+    async function initCameraSelection() {
+      try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (cameras && cameras.length > 0) {
+          cameraSelect.innerHTML = '<option value="">Pilih Kamera</option>';
+          cameras.forEach(camera => {
+            const option = document.createElement('option');
+            option.value = camera.id;
+            option.text = camera.label || `Kamera ${cameraSelect.length}`;
+            cameraSelect.appendChild(option);
+          });
+          cameraSelect.style.display = 'block';
+          currentCameraId = cameras[0].id;
+          cameraSelect.value = currentCameraId;
+        } else {
+          showToast('Tidak ada kamera yang ditemukan');
+        }
+      } catch (error) {
+        console.error('Error getting cameras:', error);
+        showToast('Gagal mengakses kamera');
+      }
+    }
+
+    // Start camera scanning
+    async function startCamera() {
+      const cameraId = cameraSelect.value;
+      if (!cameraId) {
+        showToast('Silakan pilih kamera terlebih dahulu');
+        return;
+      }
+
+      try {
+        document.getElementById('camera-loading').style.display = 'block';
+        startCameraBtn.disabled = true;
+        
+        html5QrCode = new Html5Qrcode("reader");
+        await html5QrCode.start(
+          cameraId,
+          {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+            aspectRatio: 1.0
+          },
+          (decodedText, decodedResult) => {
+            handleScanSuccess(decodedText, decodedResult);
+          },
+          (errorMessage) => {
+            // Handle scan error
+          }
+        ).then(() => {
+          document.getElementById('camera-loading').style.display = 'none';
+          startCameraBtn.disabled = true;
+          stopCameraBtn.disabled = false;
+          flashToggleBtn.disabled = false;
+          currentCameraId = cameraId;
+          showToast('Pemindaian dimulai');
+        }).catch(err => {
+          console.error('Failed to start camera:', err);
+          document.getElementById('camera-loading').style.display = 'none';
+          startCameraBtn.disabled = false;
+          showToast('Gagal memulai kamera: ' + err.message);
+        });
+      } catch (error) {
+        console.error('Error starting camera:', error);
+        document.getElementById('camera-loading').style.display = 'none';
+        startCameraBtn.disabled = false;
+        showToast('Error: ' + error.message);
+      }
+    }
+
+    // Stop camera scanning
+    async function stopCamera() {
+      try {
+        if (html5QrCode && html5QrCode.isScanning) {
+          await html5QrCode.stop();
+          startCameraBtn.disabled = false;
+          stopCameraBtn.disabled = true;
+          flashToggleBtn.disabled = true;
+          showToast('Pemindaian dihentikan');
+        }
+      } catch (error) {
+        console.error('Error stopping camera:', error);
+        showToast('Gagal menghentikan kamera');
+      }
+    }
+
+    // Toggle flash/torch
+    async function toggleFlash() {
+      try {
+        if (html5QrCode) {
+          const isFlashOn = await html5QrCode.getRunningTrackCapabilities()
+            .then(capabilities => capabilities.torch);
+          
+          if (isFlashOn) {
+            await html5QrCode.applyVideoConstraints({ advanced: [{torch: false}] });
+            flashToggleBtn.innerHTML = '<i class="fas fa-lightbulb"></i> Flash';
+          } else {
+            await html5QrCode.applyVideoConstraints({ advanced: [{torch: true}] });
+            flashToggleBtn.innerHTML = '<i class="fas fa-lightbulb"></i> Matikan';
+          }
+        }
+      } catch (error) {
+        console.error('Error toggling flash:', error);
+        showToast('Perangkat tidak mendukung flash');
+      }
+    }
+
+    // Handle successful scan
+    function handleScanSuccess(decodedText, decodedResult) {
+      // Play sound if enabled
+      if (soundToggle.checked) {
+        beepSound.play().catch(e => console.log('Cannot play sound:', e));
+      }
+      
+      // Vibrate if enabled and supported
+      if (vibrateToggle.checked && navigator.vibrate) {
+        navigator.vibrate(200);
+      }
+      
+      // Stop camera if continuous scan is not preferred
+      stopCamera();
+      
+      // Display result
+      showScanResult(decodedText, decodedResult);
+      
+      // Save to history
+      saveHistory(decodedText, decodedResult.format);
+      
+      // Auto-open URL if enabled and valid
+      if (autoOpenToggle.checked && isValidUrl(decodedText)) {
+        setTimeout(() => {
+          window.open(decodedText, '_blank');
+        }, 500);
+      }
+    }
+
+    // Show scan result
+    function showScanResult(text, format) {
+      resultSection.style.display = 'block';
+      scanResultContent.innerHTML = `
+        <p><strong>Format:</strong> <span class="barcode-type">${format || 'QR Code'}</span></p>
+        <div style="margin: 15px 0; padding: 15px; background: #f5f5f5; border-radius: 8px; word-break: break-all;">
+          ${text}
+        </div>
+      `;
+      
+      // Create action buttons
+      resultActions.innerHTML = '';
+      
+      if (isValidUrl(text)) {
+        const openBtn = document.createElement('button');
+        openBtn.className = 'btn';
+        openBtn.innerHTML = '<i class="fas fa-external-link-alt"></i> Buka Link';
+        openBtn.onclick = () => window.open(text, '_blank');
+        resultActions.appendChild(openBtn);
+      }
+      
+      const shareBtn = document.createElement('button');
+      shareBtn.className = 'btn btn-secondary';
+      shareBtn.innerHTML = '<i class="fas fa-share"></i> Bagikan';
+      shareBtn.onclick = () => shareResult(text);
+      resultActions.appendChild(shareBtn);
+      
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'btn';
+      copyBtn.innerHTML = '<i class="fas fa-copy"></i> Salin';
+      copyBtn.onclick = () => copyToClipboard(text);
+      resultActions.appendChild(copyBtn);
+      
+      // Scroll to result
+      resultSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Scan from image
+    imageUpload.addEventListener('change', async function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      try {
+        showToast('Memproses gambar...');
+        
+        // Show image preview
+        const reader = new FileReader();
+        reader.onload = function(event) {
+          document.getElementById('image-preview').innerHTML = `
+            <img src="${event.target.result}" style="max-width: 100%; max-height: 300px; border-radius: 8px;">
+          `;
+        };
+        reader.readAsDataURL(file);
+        
+        // Scan the image
+        const result = await Html5Qrcode.scanFile(file, true);
+        handleScanSuccess(result.text, result.format);
+        showToast('Berhasil memindai gambar');
+      } catch (error) {
+        console.error('Error scanning image:', error);
+        showToast('Gagal memindai gambar');
+      }
+    });
+
+    // Generate QR code
+    generateQrBtn.addEventListener('click', function() {
+      const text = qrText.value.trim();
+      if (!text) {
+        showToast('Masukkan teks atau URL terlebih dahulu');
+        return;
+      }
+      
+      try {
+        QRCode.toCanvas(text, { width: 200, margin: 2 }, (error, canvas) => {
+          if (error) {
+            console.error('Error generating QR code:', error);
+            showToast('Gagal membuat QR code');
+            return;
+          }
+          
+          qrResult.innerHTML = '';
+          qrResult.appendChild(canvas);
+          qrDownload.style.display = 'block';
+          
+          // Set up download button
+          downloadQrBtn.onclick = function() {
+            const link = document.createElement('a');
+            link.download = 'qrcode.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+          };
+          
+          showToast('QR code berhasil dibuat');
+        });
+      } catch (error) {
+        console.error('Error generating QR code:', error);
+        showToast('Gagal membuat QR code');
+      }
+    });
+
+    // Save scan history
+    function saveHistory(text, format) {
+      const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+      history.unshift({
+        text,
+        format: format || 'QR Code',
+        timestamp: new Date().toISOString()
+      });
+      
+      // Keep only the last 100 items
+      if (history.length > 100) {
+        history.pop();
+      }
+      
+      localStorage.setItem('scanHistory', JSON.stringify(history));
+      loadHistory();
+    }
+
+    // Load scan history
+    function loadHistory() {
+      const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+      historyList.innerHTML = history.map(item => `
+        <li class="history-item">
+          <div style="word-break: break-all;">${item.text}</div>
+          <div class="history-time">
+            <span class="barcode-type">${item.format}</span>
+            ${new Date(item.timestamp).toLocaleString()}
+          </div>
+        </li>
+      `).join('');
+    }
+
+    // Clear history
+    function clearHistory() {
+      if (confirm('Apakah Anda yakin ingin menghapus semua riwayat scan?')) {
+        localStorage.removeItem('scanHistory');
+        loadHistory();
+        showToast('Riwayat scan dihapus');
+      }
+    }
+
+    // Export history
+    exportHistoryBtn.addEventListener('click', function() {
+      const history = JSON.parse(localStorage.getItem('scanHistory') || '[]');
+      if (history.length === 0) {
+        showToast('Tidak ada riwayat untuk diekspor');
+        return;
+      }
+      
+      const csvContent = "data:text/csv;charset=utf-8," +
+        history.map(item => `"${item.text.replace(/"/g, '""')}",${item.format},"${item.timestamp}"`).join("\n");
+      
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "scan_history.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      showToast('Riwayat berhasil diekspor');
+    });
+
+    // Share result
+    function shareResult(text) {
+      if (navigator.share) {
+        navigator.share({
+          title: 'Hasil Scan QR Code',
+          text: text,
+          url: isValidUrl(text) ? text : undefined
+        }).catch(err => {
+          console.log('Error sharing:', err);
+          showToast('Berbagi dibatalkan');
+        });
+      } else {
+        copyToClipboard(text);
+        showToast('Teks disalin ke clipboard');
+      }
+    }
+
+    // Copy to clipboard
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Teks disalin ke clipboard');
+      }).catch(err => {
+        console.error('Failed to copy:', err);
+        showToast('Gagal menyalin teks');
+      });
+    }
+
+    // Show toast notification
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // Check if string is a valid URL
+    function isValidUrl(string) {
+      try {
+        new URL(string);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    // PWA installation
+    function installPWA() {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choiceResult) => {
+          if (choiceResult.outcome === 'accepted') {
+            console.log('User accepted the install prompt');
+          } else {
+            console.log('User dismissed the install prompt');
+          }
+          deferredPrompt = null;
+        });
+      } else {
+        showToast('Gunakan menu browser untuk menginstall aplikasi');
+      }
+    }
+
+    // Set up event listeners
+    function setupEventListeners() {
+      // Camera controls
+      startCameraBtn.addEventListener('click', startCamera);
+      stopCameraBtn.addEventListener('click', stopCamera);
+      flashToggleBtn.addEventListener('click', toggleFlash);
+      cameraSelect.addEventListener('change', function() {
+        if (html5QrCode && html5QrCode.isScanning) {
+          stopCamera().then(startCamera);
+        }
+      });
+      
+      // Settings toggles
+      soundToggle.addEventListener('change', function() {
+        localStorage.setItem('soundEnabled', this.checked);
+      });
+      
+      vibrateToggle.addEventListener('change', function() {
+        localStorage.setItem('vibrateEnabled', this.checked);
+      });
+      
+      autoOpenToggle.addEventListener('change', function() {
+        localStorage.setItem('autoOpenEnabled', this.checked);
+      });
+      
+      darkModeToggle.addEventListener('change', toggleDarkMode);
+    }
+  
+   window.addEventListener("load", function () {
+    setTimeout(function () {
+      const splash = document.getElementById("splash");
+      if (splash) splash.style.display = "none";
+    }, 2500); // 2.5 detik
+  });
+  
+  window.addEventListener("load", function () {
+    setTimeout(function () {
+      const splash = document.getElementById("splashScreen");
+      if (splash) splash.style.display = "none";
+    }, 3000); // Hilang dalam 3 detik
+  });
+  </script>
+  
+</body>
+</html>
